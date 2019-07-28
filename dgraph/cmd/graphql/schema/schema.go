@@ -27,9 +27,6 @@ import (
 	"github.com/vektah/gqlparser/validator"
 )
 
-// SupportedScalars is the list of scalar types that we support.
-type SupportedScalars string
-
 type schRuleFunc func(schema *ast.SchemaDocument) *gqlerror.Error
 
 type schRule struct {
@@ -37,45 +34,69 @@ type schRule struct {
 	schRuleFunc schRuleFunc
 }
 
-var schRules []schRule
+type scalar struct {
+	name       string
+	dgraphType string
+}
+
+type args struct {
+	name    string
+	gqlType string
+	nonNull bool
+}
+
+type directive struct {
+	name string
+	args ast.ArgumentDefinitionList
+}
 
 const (
-	INT      SupportedScalars = "Int"
-	FLOAT    SupportedScalars = "Float"
-	STRING   SupportedScalars = "String"
-	DATETIME SupportedScalars = "DateTime"
-	ID       SupportedScalars = "ID"
-	BOOLEAN  SupportedScalars = "Boolean"
+	inverseName   = "hasInverse"
+	inverseFldArg = "field"
 )
+
+var schRules []schRule
+
+var supportedScalars = []scalar{
+	{name: "ID", dgraphType: "uid"},
+	{name: "Boolean", dgraphType: "bool"},
+	{name: "Int", dgraphType: "int"},
+	{name: "Float", dgraphType: "float"},
+	{name: "String", dgraphType: "string"},
+	{name: "DateTime", dgraphType: "dateTime"}}
+
+var supportedDirectives = []directive{
+	{name: inverseName,
+		args: ast.ArgumentDefinitionList{
+			{Name: inverseFldArg, Type: &ast.Type{NamedType: "String", NonNull: true}}}}}
 
 // AddScalars adds all the supported scalars in the schema.
 func AddScalars(doc *ast.SchemaDocument) {
-	addScalarInSchema(INT, doc)
-	addScalarInSchema(FLOAT, doc)
-	addScalarInSchema(ID, doc)
-	addScalarInSchema(DATETIME, doc)
-	addScalarInSchema(STRING, doc)
-	addScalarInSchema(BOOLEAN, doc)
+	for _, s := range supportedScalars {
+		addScalar(s, doc)
+	}
 }
 
 // AddDirectives add all the supported directives to schema.
 func AddDirectives(doc *ast.SchemaDocument) {
-	// It would be better to have a list of supported directives
-	addDirectiveInSchema("hasInverse", []ast.DirectiveLocation{ast.LocationField}, doc)
+	for _, d := range supportedDirectives {
+		addDirective(d, []ast.DirectiveLocation{ast.LocationField}, doc)
+	}
 }
 
-func addScalarInSchema(sType SupportedScalars, doc *ast.SchemaDocument) {
+func addScalar(s scalar, doc *ast.SchemaDocument) {
 	doc.Definitions = append(
 		doc.Definitions,
 		// Empty Position because it is being inserted by the engine.
-		&ast.Definition{Kind: ast.Scalar, Name: string(sType), Position: &ast.Position{}},
+		&ast.Definition{Kind: ast.Scalar, Name: s.name, Position: &ast.Position{}},
 	)
 }
 
-func addDirectiveInSchema(name string, locations []ast.DirectiveLocation, doc *ast.SchemaDocument) {
+func addDirective(d directive, locations []ast.DirectiveLocation, doc *ast.SchemaDocument) {
 	doc.Directives = append(doc.Directives, &ast.DirectiveDefinition{
-		Name:      name,
+		Name:      d.name,
 		Locations: locations,
+		Arguments: d.args,
 	})
 }
 
@@ -318,7 +339,7 @@ func createGetFld(defn *ast.Definition) *ast.FieldDefinition {
 			&ast.ArgumentDefinition{
 				Name: "id",
 				Type: &ast.Type{
-					NamedType: string(ID),
+					NamedType: idTypeFor(defn),
 					NonNull:   true,
 				},
 			},
@@ -381,7 +402,7 @@ func createUpdFld(defn *ast.Definition) *ast.FieldDefinition {
 	updArg := &ast.ArgumentDefinition{
 		Name: "id",
 		Type: &ast.Type{
-			NamedType: string(ID),
+			NamedType: idTypeFor(defn),
 			NonNull:   true,
 		},
 	}
@@ -418,7 +439,7 @@ func createDelFld(defn *ast.Definition) *ast.FieldDefinition {
 			&ast.ArgumentDefinition{
 				Name: "id",
 				Type: &ast.Type{
-					NamedType: string(ID),
+					NamedType: idTypeFor(defn),
 					NonNull:   true,
 				},
 			},
@@ -439,7 +460,7 @@ func getFilterField() ast.FieldList {
 		&ast.FieldDefinition{
 			Name: "dgraph",
 			Type: &ast.Type{
-				NamedType: string(STRING),
+				NamedType: "String",
 			},
 		},
 	}
@@ -448,7 +469,7 @@ func getFilterField() ast.FieldList {
 func getNonIDFields(schema *ast.Schema, defn *ast.Definition) ast.FieldList {
 	fldList := make([]*ast.FieldDefinition, 0)
 	for _, fld := range defn.Fields {
-		if isIDField(fld) {
+		if isIDField(defn, fld) {
 			continue
 		}
 		if schema.Types[fld.Type.Name()].Kind == ast.Object {
@@ -481,7 +502,7 @@ func getNonIDFields(schema *ast.Schema, defn *ast.Definition) ast.FieldList {
 func getIDField(defn *ast.Definition) ast.FieldList {
 	fldList := make([]*ast.FieldDefinition, 0)
 	for _, fld := range defn.Fields {
-		if isIDField(fld) {
+		if isIDField(defn, fld) {
 			// Deepcopy is not required because we don't modify values other than nonull
 			newFld := *fld
 			fldList = append(fldList, &newFld)
@@ -701,6 +722,96 @@ func Stringify(sch *ast.Schema) string {
 	return schStr.String()
 }
 
-func isIDField(fld *ast.FieldDefinition) bool {
-	return fld.Type.Name() == string(ID)
+func idTypeFor(defn *ast.Definition) string {
+	return "ID"
 }
+
+func isIDField(defn *ast.Definition, fld *ast.FieldDefinition) bool {
+	return fld.Type.Name() == idTypeFor(defn)
+}
+
+// Then you can have functions like this to extract things from the directives
+// the functions are the behaviors that the rest of the code needs
+// ... generally better than encoding the behaviours into the remainder
+// of the code - particularly if it's in more than one spot.
+//
+func getInverseArgs(d *ast.Directive) (string, string, *gqlerror.Error) {
+	fldArg := d.Arguments.ForName(inverseFldArg)
+	if fldArg == nil {
+		panic("Expected a hasInverse to have a field arg, but it did not : " +
+			genDirectiveString(d))
+		// I think this is a panic.  We are expecting GraphQL validation to have
+		// already ensured that this is well formed.  If that hasn't happened
+		// then something is broken enough that we need to fix it, not just give
+		// an error to the user.
+	}
+
+	splitVal := strings.Split(fldArg.Value.Raw, ".")
+	if len(splitVal) != 2 {
+		return "", "", gqlerror.ErrorPosf(fldArg.Position, "...nice error...")
+	}
+
+	return splitVal[0], splitVal[1], nil
+}
+
+func getInverseDirective(dirs *ast.DirectiveList) *ast.Directive {
+	if dirs == nil {
+		return nil
+	}
+	return dirs.ForName(inverseName)
+}
+
+/* With ^^ this, checkHasInverseArgs can be simplified.  ATM part of it is:
+----
+if invFld.Directives == nil {
+	return gqlerror.ErrorPosf(
+		fld.Position, "Inverse of %s: %s, doesn't have inverse directive pointing back",
+		fld.Name, fldArg.Value.Raw,
+	)
+}
+
+if invDirective := invFld.Directives.ForName(string(HASINVERSE)); invDirective != nil {
+	 if invFldArg := invDirective.Arguments.ForName(string(FIELD)); invFldArg != nil {
+					invSplitVal := strings.Split(invFldArg.Value.Raw, ".")
+					if len(invSplitVal) == 2 &&
+						!(invSplitVal[0] == typ.Name && invSplitVal[1] == fld.Name) {
+							........
+							........
+} else {
+	..same error as 3 if's above...
+}
+--------
+
+that becomes just
+
+d := getInverseDirective(invFld.Directives)
+if d == nil { return ...nice error... }
+
+typ, fld := getInverseArgs(d)
+if (typ != typ.Name || fld != fld.Name) {
+	return ...nice error...
+}
+
+The original checkHasInverseArgs mixes in some other validation, code to get
+args etc, and goes to 5 levels of nesting deep.  That makes the logic of what
+it's actually checking really hidden by all the other bits going on.
+
+This way, the function just becomes the logic that it cares about.
+*/
+
+/*
+We can probably do better than this too.
+
+ 	if direc.Name == string(HASINVERSE) {
+		return checkHasInverseArgs(typ, fld, direc, sch)
+	}
+
+As the number of directives goes up, this becomes a long list of if's, all with
+a string compare to a constant and then a known fn call as the central part.
+
+What if each directive in the supportedDirectives array also had a validation
+function.  Then all the nasty string compares against known constants all through
+the code can disapear, and we can just find the directive in the array and call
+
+supporedDirectives[d].validate(...)
+*/

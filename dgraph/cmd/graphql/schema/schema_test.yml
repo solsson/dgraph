@@ -1,46 +1,49 @@
 invalid_schems:
   -
-    name: "More than 1 id field"
+    name: "More than 1 ID field"
     input: |
-      type Person {
+      type T {
         id: ID!
         id2: ID!
-        name: String!
       }
-    output: [{"message":"More than one ID field found for type Person","locations":[{"line":3,"column":3}]}]
+    output: [
+      {"message":"More than one ID field found for type Person",
+       "locations":[{"line":3,"column":3}]}]
 
   -
-    name: "Query in initial schema"
+    name: "Query or Mutation in initial schema"
     input: |
       type Query {
-        getAuthro(id: ID): Author!
+        q(id: ID): T!
       }
-    output: [{"message":"Only type and enums are allowed in initial schema.","locations":[{"line":1,"column":6}]},{"message":"Query is reserved keyword. You can't declare type with this name","locations":[{"line":1,"column":6}]}]
+      type Mutation {
+        ...
+      }
+    output: [
+      {"message":"Only type and enums are allowed in initial schema.",
+       "locations":[{"line":1,"column":6}]},
+      {"message":"Query is reserved keyword. You can't declare type with this name",
+       "locations":[{"line":1,"column":6}]}]
 
   -
     name: "Invalid list type"
     input: |
-      type Author {
-        id: ID!
-        name: String
-        posts: [Post]!
+      type T {
+        posts: [R]!
       }
     output: [{"message":"[Post]! type of lists are invalid","locations":[{"line":4,"column":3}]}]
 
   -
     name: "Scalar in initial schema"
     input: |
-      scalar Int
+      scalar S
     output: [{"message":"Only type and enums are allowed in initial schema.","locations":[{"line":1,"column":8}]},{"message":"Int is reserved keyword. You can't declare type with this name","locations":[{"line":1,"column":8}]}]
 
   -
     name: "Invalid argument to hasInverse"
     input: |
-      type Author {
-        id: ID!
-        name: String!
-        posts: [Post!]! @hasInverse(fields: "Post.author")
-        friends: [Author!]!
+      type T {
+        posts: [R!]! @hasInverse(fields: "R.f")
       }
     output: [{"message":"Invalid argument to hasInverse","locations":[{"line":4,"column":31}]}]
 
@@ -48,10 +51,7 @@ invalid_schems:
     name: "Unsupported Directive"
     input: |
       type Author {
-        id: ID!
-        name: String!
         posts: [Post!]! @hasNothing(field: "Post.author")
-        friends: [Author!]!
       }
     output: [{"message":"Unsupported directive @hasNothing","locations":[{"line":4,"column":20}]}]
 

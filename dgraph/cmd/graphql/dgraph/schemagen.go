@@ -73,7 +73,7 @@ func GenDgSchema(gqlSch *ast.Schema) string {
 				case ast.Scalar:
 					// TODO: indexes needed here
 					fmt.Fprintf(&typeDef, "  %s.%s: %s\n",
-						def.Name, f.Name, strings.ToLower(f.Type.Name()))
+						def.Name, f.Name, strings.ToLower(f.Type.Name())) // FIXME: these names then map out from scalar defn ... some Dgraph type names are different to GraphQL names
 					fmt.Fprintf(&preds, "%s.%s: %s .\n",
 						def.Name, f.Name, strings.ToLower(f.Type.Name()))
 				case ast.Enum:
